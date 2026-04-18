@@ -57,6 +57,14 @@ on premise.
   vision inference locally.</em>
 </p>
 
+## Demo
+
+See it in action: raw camera frames in, plain-language event reports out.
+
+<!-- drop your mp4 on this line in the GitHub editor -->
+https://github.com/user-attachments/assets/0311fca6-191c-4d68-bc7e-b51ea797e72f
+
+
 ## How it works
 
 ```
