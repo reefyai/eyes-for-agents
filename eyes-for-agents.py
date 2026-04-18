@@ -118,6 +118,157 @@ def start_broker(bind_host: str, bind_port: int) -> threading.Thread:
     return t
 
 
+# ---------- MCP server (lets agents query events over the network) ----------
+
+def _parse_md_meta(text: str) -> dict:
+    """Pull camera/label/score/duration from the bullet block at the top of an event md."""
+    meta: dict = {}
+    for line in text.splitlines():
+        if line.startswith("- **camera:**"):
+            meta["camera"] = line.split("**camera:**", 1)[1].strip()
+        elif line.startswith("- **label:**"):
+            meta["label"] = line.split("**label:**", 1)[1].strip()
+        elif line.startswith("- **score:**"):
+            try:
+                meta["score"] = float(line.split("**score:**", 1)[1].strip())
+            except ValueError:
+                pass
+        elif line.startswith("- **duration:**"):
+            d = line.split("**duration:**", 1)[1].strip().rstrip("s")
+            try:
+                meta["duration_s"] = float(d)
+            except ValueError:
+                pass
+        elif line.startswith("- **start:**"):
+            meta["start"] = line.split("**start:**", 1)[1].strip()
+    return meta
+
+
+def _short_analysis(text: str, max_chars: int = 200) -> str:
+    if "## Analysis" in text:
+        body = text.split("## Analysis", 1)[1].strip()
+    else:
+        body = text
+    return body[:max_chars] + ("..." if len(body) > max_chars else "")
+
+
+def _grep_snippet(text: str, q: str, ctx: int = 120) -> str:
+    idx = text.lower().find(q.lower())
+    if idx < 0:
+        return ""
+    start = max(0, idx - ctx)
+    end = min(len(text), idx + len(q) + ctx)
+    snip = text[start:end].strip()
+    return ("..." if start > 0 else "") + snip + ("..." if end < len(text) else "")
+
+
+def _ts_from_filename(p: Path, fallback_mtime: bool = True) -> float:
+    """Frigate event ids look like '<unixtime>.<frac>-<id>'. Fall back to mtime."""
+    try:
+        return float(p.stem.split("-")[0])
+    except (ValueError, IndexError):
+        return p.stat().st_mtime if fallback_mtime else 0.0
+
+
+def start_mcp_server(host: str, port: int, events_dir: Path) -> threading.Thread:
+    """Run a FastMCP server in a background thread.
+
+    Exposes camera-event tools to any MCP client (e.g. OpenClaw on a sibling
+    container reaching us at http://<frigate_uuid>:<port>/mcp).
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("eyes-for-agents", host=host, port=port)
+
+    @mcp.tool()
+    def list_events(since_minutes: int = 60, limit: int = 50,
+                    camera: str | None = None) -> list[dict]:
+        """List recent Frigate camera events, newest first.
+
+        Each entry has id, time, camera, label, duration_s, and a short
+        summary (first ~200 chars of the LLM analysis). Use get_event(id)
+        to read the full markdown report for any specific event.
+        """
+        cutoff = time.time() - since_minutes * 60
+        rows = []
+        files = sorted(events_dir.glob("*.md"),
+                       key=lambda x: x.stat().st_mtime, reverse=True)
+        for p in files:
+            ts = _ts_from_filename(p)
+            if ts < cutoff:
+                continue
+            try:
+                text = p.read_text()
+            except OSError:
+                continue
+            meta = _parse_md_meta(text)
+            if camera and meta.get("camera", "").lower() != camera.lower():
+                continue
+            rows.append({
+                "id": p.stem,
+                "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                "camera": meta.get("camera", "?"),
+                "label": meta.get("label", "?"),
+                "duration_s": meta.get("duration_s"),
+                "summary": _short_analysis(text, max_chars=200),
+            })
+            if len(rows) >= limit:
+                break
+        return rows
+
+    @mcp.tool()
+    def get_event(event_id: str) -> dict:
+        """Return the full event report (metadata + LLM analysis markdown)
+        for the given event id (as returned by list_events)."""
+        p = events_dir / f"{event_id}.md"
+        if not p.exists():
+            return {"error": f"event not found: {event_id}"}
+        text = p.read_text()
+        meta = _parse_md_meta(text)
+        meta["id"] = event_id
+        meta["markdown"] = text
+        return meta
+
+    @mcp.tool()
+    def search_events(query: str, limit: int = 20) -> list[dict]:
+        """Case-insensitive substring search across all event reports.
+
+        Returns matching events newest-first, with a short snippet around
+        the first match in each report.
+        """
+        results = []
+        files = sorted(events_dir.glob("*.md"),
+                       key=lambda x: x.stat().st_mtime, reverse=True)
+        for p in files:
+            try:
+                text = p.read_text()
+            except OSError:
+                continue
+            if query.lower() not in text.lower():
+                continue
+            ts = _ts_from_filename(p)
+            results.append({
+                "id": p.stem,
+                "time": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),
+                "snippet": _grep_snippet(text, query),
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+    def runner():
+        try:
+            # streamable-http is the modern MCP HTTP transport. Older clients
+            # may need "sse" - swap if compatibility matters.
+            mcp.run(transport="streamable-http")
+        except Exception as e:  # noqa: BLE001
+            print(f"[mcp] server error: {e}", file=sys.stderr)
+
+    t = threading.Thread(target=runner, daemon=True, name="mcp-server")
+    t.start()
+    return t
+
+
 # ---------- Frigate ----------
 
 def list_events(frigate_url: str, limit: int = 25,
@@ -349,6 +500,11 @@ def main() -> None:
                     help="MQTT broker bind address (Frigate connects here)")
     ap.add_argument("--mqtt-port", type=int, default=1883,
                     help="MQTT broker port")
+    ap.add_argument("--mcp-bind", default="0.0.0.0",
+                    help="MCP server bind address (other agents like OpenClaw "
+                         "connect here over the container network)")
+    ap.add_argument("--mcp-port", type=int, default=1884,
+                    help="MCP server port. 0 disables the MCP server.")
     ap.add_argument("--frames", type=int, default=10,
                     help="Number of frames to sample evenly across the clip")
     ap.add_argument("--frame-max-dim", type=int, default=640,
@@ -397,6 +553,14 @@ def main() -> None:
     print(f"[frigate] expects MQTT at: host=<this-host> port={args.mqtt_port}")
     print(f"[ollama]  {args.ollama_url}  model={args.model}")
     print(f"[out]     {out_dir.resolve()}")
+
+    if args.mcp_port:
+        print(f"[mcp]     starting MCP server on {args.mcp_bind}:{args.mcp_port} "
+              f"(http://<host>:{args.mcp_port}/mcp)")
+        try:
+            start_mcp_server(args.mcp_bind, args.mcp_port, out_dir)
+        except Exception as e:  # noqa: BLE001
+            print(f"[mcp]     failed to start: {e}", file=sys.stderr)
 
     seen: set[str] = set()
     event_q: Queue = Queue(maxsize=args.queue_size)

@@ -143,7 +143,8 @@ The script:
 1. Starts an MQTT broker on `0.0.0.0:1883`.
 2. Subscribes to `frigate/events` on its own broker.
 3. Backfills events finalized in the last 10 minutes (one-shot HTTP).
-4. Waits for live events forever.
+4. Starts an MCP server on `0.0.0.0:1884` so other agents can query events.
+5. Waits for live events forever.
 
 ## Options
 
@@ -155,6 +156,8 @@ The script:
 | `--out-dir` | `./events` | Per-event Markdown output |
 | `--mqtt-bind` | `0.0.0.0` | MQTT broker bind address |
 | `--mqtt-port` | `1883` | MQTT broker port |
+| `--mcp-bind` | `0.0.0.0` | MCP server bind address |
+| `--mcp-port` | `1884` | MCP server port (0 disables) |
 | `--frames` | `10` | Frames sampled per clip |
 | `--frame-max-dim` | `640` | Downscale longer side (0 = no scaling) |
 | `--backfill-minutes` | `10` | Process events from last N min on startup |
@@ -162,6 +165,44 @@ The script:
 | `--queue-size` | `100` | Max events buffered while LLM is busy |
 
 Run `./eyes-for-agents.py --help` for the full list.
+
+## Plugging into an agent (MCP)
+
+Eyes-for-agents exposes an [MCP](https://modelcontextprotocol.io) server on
+`:1884` (HTTP, streamable transport). Any MCP-speaking agent can connect
+and query the event log live:
+
+| Tool | Args | Returns |
+|------|------|---------|
+| `list_events` | `since_minutes`, `limit`, `camera` | Newest-first list of events with brief summaries |
+| `get_event` | `event_id` | Full event metadata + LLM analysis markdown |
+| `search_events` | `query`, `limit` | Substring search across all reports |
+
+### Wiring up OpenClaw
+
+If [OpenClaw](https://github.com/openclaw/openclaw) is running in a sibling
+container on the same docker network, it can reach this MCP server using
+the eyes-host's container name (in Reefy that's the Frigate instance UUID).
+
+Add an entry like this to OpenClaw's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "eyes-for-agents": {
+      "url": "http://<frigate-container-uuid>:1884/mcp"
+    }
+  }
+}
+```
+
+Now your agent can be asked things like:
+
+- _"Did the trash truck come this morning?"_ -> agent calls `search_events("truck")` or `list_events(since_minutes=300)` and reads through.
+- _"What did the FedEx driver do?"_ -> `search_events("FedEx")` -> `get_event(...)` for the matching one.
+- _"Anything weird at the gate today?"_ -> `list_events(since_minutes=1440, camera="gate")`.
+
+No filesystem sharing, no copy job, no rsync - just a TCP connection.
 
 ## Customizing the prompt
 
