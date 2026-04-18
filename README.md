@@ -59,10 +59,12 @@ on premise.
 
 ## Demo
 
-See it in action: raw camera frames in, plain-language event reports out.
+The website is a chat interface -- ask the agent anything about what's happened around the community that day and it answers from real camera events. Want to see the raw footage? There's a link to the live feed. No timeline scrubbing, no guessing. Just ask.
 
 <!-- drop your mp4 on this line in the GitHub editor -->
-https://github.com/user-attachments/assets/0311fca6-191c-4d68-bc7e-b51ea797e72f
+https://github.com/user-attachments/assets/9c9a2cb5-f3ff-4ce4-9d31-a8895604c177
+
+
 
 
 ## How it works
