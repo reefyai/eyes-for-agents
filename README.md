@@ -49,6 +49,14 @@ With cameras already in place, the agent now answers these from real,
 live context instead of someone walking outside to look. All running
 on premise.
 
+<p align="center">
+  <img src="images/team-hackathon.jpg" alt="The team hacking during the Miami eMerge AI Hackathon" width="700">
+  <br>
+  <em>Our team during the hackathon window - hacking on this repo around our
+  custom-built GPUter (Nvidia RTX 5060 Ti 16GB) we brought to do all the
+  vision inference locally.</em>
+</p>
+
 ## How it works
 
 ```
