@@ -73,16 +73,20 @@ def start_broker(bind_host: str, bind_port: int) -> threading.Thread:
     """Start an amqtt broker in a background thread on its own asyncio loop.
 
     Frigate (or any other publisher) connects to bind_host:bind_port.
-    No auth - this is local-only by default.
+    Anonymous (no auth) - intended for local-only use.
+
+    The broker MUST be constructed inside a running loop (newer amqtt
+    versions call asyncio.get_running_loop() in __init__), so we run a
+    small async coroutine that builds it, starts it, then sleeps forever
+    to keep the loop alive.
     """
     ready = threading.Event()
     error: dict = {}
 
-    def runner() -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        # amqtt's BroketrConfig schema is strict - only ship keys it knows.
-        # Bare minimum: one TCP listener, anonymous auth.
+    async def _run_broker() -> None:
+        # amqtt schema is strict in newer versions. Minimum viable config:
+        # a single TCP listener. Anonymous is the default; the new plugins
+        # mechanism replaces the old 'auth'/'topic-check' keys.
         config = {
             "listeners": {
                 "default": {
@@ -90,13 +94,17 @@ def start_broker(bind_host: str, bind_port: int) -> threading.Thread:
                     "bind": f"{bind_host}:{bind_port}",
                 },
             },
-            "auth": {"allow-anonymous": True},
         }
         broker = Broker(config)
+        await broker.start()
+        ready.set()
+        # Keep the loop alive
+        while True:
+            await asyncio.sleep(3600)
+
+    def runner() -> None:
         try:
-            loop.run_until_complete(broker.start())
-            ready.set()
-            loop.run_forever()
+            asyncio.run(_run_broker())
         except Exception as e:  # noqa: BLE001
             error["err"] = e
             ready.set()
