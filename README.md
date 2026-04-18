@@ -1,4 +1,4 @@
-# eyes-for-agents
+# Eyes for Agents
 
 **Give your AI agents eyes on the physical world.**
 
