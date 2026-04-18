@@ -17,6 +17,7 @@ agent now knows when the package was actually delivered, when the dog
 escaped the yard, when a stranger lingered too long at the gate.
 
 Think **Tony Stark's JARVIS, but for your HOA**. (Sorry Karen.)
+<img width="500" height="250" alt="jarvis_memes_usable (1)" src="https://github.com/user-attachments/assets/c8d4aed6-0414-4720-8d04-41f48cc4f7f0" />
 
 **It runs entirely on your hardware.** Frames go to a local GPU running
 [Ollama](https://ollama.com) with [Gemma 4](https://ai.google.dev/gemma).
