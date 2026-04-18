@@ -115,7 +115,7 @@ mqtt:
 ```bash
 ./eyes-for-agents.py \
     --frigate-url http://127.0.0.1:5000 \
-    --ollama-url  http://127.0.0.1:11434 \
+    --ollama-url  http://ollama:11434 \
     --model       gemma4:e2b \
     --out-dir     ./events
 ```
@@ -132,7 +132,7 @@ The script:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--frigate-url` | `http://127.0.0.1:5000` | Frigate API base URL |
-| `--ollama-url` | `http://127.0.0.1:11434` | Ollama API base URL |
+| `--ollama-url` | `http://ollama:11434` | Ollama API base URL (use `http://127.0.0.1:11434` if ollama is on the host) |
 | `--model` | `gemma4:e2b` | Vision-capable Ollama model tag |
 | `--out-dir` | `./events` | Per-event Markdown output |
 | `--mqtt-bind` | `0.0.0.0` | MQTT broker bind address |

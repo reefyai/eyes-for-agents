@@ -336,7 +336,10 @@ def setup_subscriber(broker_host: str, broker_port: int, event_q: Queue,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--frigate-url", default="http://127.0.0.1:5000")
-    ap.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    ap.add_argument("--ollama-url", default="http://ollama:11434",
+                    help="Ollama API URL. Default 'http://ollama:11434' "
+                         "matches the typical container-network setup; "
+                         "use 'http://127.0.0.1:11434' for ollama on the host.")
     ap.add_argument("--model", default="gemma4:e2b",
                     help="Ollama model tag (must be a vision-capable model "
                          "pulled on the target host)")
