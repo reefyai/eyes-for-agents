@@ -1,0 +1,202 @@
+# eyes-for-agents
+
+**Give your AI agents eyes on the physical world.**
+
+Today's AI agents live entirely on the internet. They write code, send
+emails, place orders, book flights, manage calendars - but they're
+strangers to the actual world outside your browser tab. They can't see
+the FedEx truck in your driveway, or the raccoon raiding your trash.
+
+`eyes-for-agents` is a bridge from cameras to agents. It watches your
+existing security cameras (via [Frigate](https://frigate.video)),
+notices any activity, asks Google's latest
+[Gemma 4](https://ai.google.dev/gemma) vision model to describe what it
+sees in plain language, and feeds that description straight into your
+[OpenClaw](https://github.com/openclaw/openclaw) agent's memory. Your
+agent now knows when the package was actually delivered, when the dog
+escaped the yard, when a stranger lingered too long at the gate.
+
+Think **Tony Stark's JARVIS, but for your HOA**. (Sorry Karen.)
+
+**It runs entirely on your hardware.** Frames go to a local GPU running
+[Ollama](https://ollama.com) with [Gemma 4](https://ai.google.dev/gemma).
+Nothing leaves the building - no cloud vision API, no third-party
+training dataset.
+
+## Built for the [Miami eMerge AI Hackathon](https://luma.com/1vlz4g39)
+
+We stitched together a few cutting-edge open pieces into something that
+actually does the job:
+
+- **[OpenClaw](https://github.com/openclaw/openclaw)** - the AI agent
+  that hears about events and decides what to do (notify, log, act).
+- **[Gemma 4](https://ai.google.dev/gemma)** (via Ollama) - the latest
+  small multimodal model from Google DeepMind, doing the visual
+  understanding locally on a consumer GPU.
+- **[YOLO](https://docs.ultralytics.com/) (via Frigate)** - real-time
+  object detection on raw camera frames, also on the local GPU,
+  triggering events that are worth describing.
+- **eyes-for-agents** (this repo) - the orchestration glue. An embedded
+  MQTT broker, an event subscriber, clip-fetch + frame-sample logic, a
+  prompt that tells the LLM what to focus on, and a Markdown writer
+  that drops one report per event.
+
+We built this for our own HOA community manager, who is tired of
+answering the same questions all day - "Did the trash truck come
+already?", "Is the pool too crowded to come down for a sunbath?".
+With cameras already in place, the agent now answers these from real,
+live context instead of someone walking outside to look. All running
+on premise.
+
+## How it works
+
+```
+[Frigate] --MQTT--> [embedded amqtt broker] --> [paho subscriber]
+                                                      |
+                                                      v
+                                         /api/events/<id>/clip.mp4
+                                                      |
+                                                      v
+                                                ffmpeg frames
+                                                      |
+                                                      v
+                                              Ollama /api/chat
+                                                      |
+                                                      v
+                                          <out-dir>/<event_id>.md
+```
+
+A single Python script:
+
+- Embeds a tiny MQTT broker so Frigate can publish events directly to
+  it (no separate broker needed).
+- Subscribes to `frigate/events` and processes each finalized event.
+- Pulls the clip via Frigate's HTTP API.
+- Samples N evenly-spaced frames with ffmpeg.
+- Asks a local Ollama vision model to describe what's happening.
+- Writes a per-event Markdown report.
+
+## Why MQTT (not polling)?
+
+Polling Frigate's `/api/events` works but is unreliable: bursts of
+events overflow the 25-event window, the script can't tell when a clip
+is finalized, and missed events stay missed. Frigate's MQTT `events`
+stream fires exactly once per finalized event with the full event
+object in the payload.
+
+## Install
+
+```bash
+pip install -r requirements.txt
+```
+
+You also need `ffmpeg` and `ffprobe` on PATH (or pass `--ffmpeg` /
+`--ffprobe`).
+
+## Configure Frigate
+
+Add this to your Frigate `config.yml` and restart Frigate:
+
+```yaml
+mqtt:
+  enabled: true
+  host: <ip-of-this-script>   # 127.0.0.1 if same container, else host IP
+  port: 1883
+```
+
+## Run
+
+```bash
+./eyes-for-agents.py \
+    --frigate-url http://127.0.0.1:5000 \
+    --ollama-url  http://127.0.0.1:11434 \
+    --model       gemma4:e2b \
+    --out-dir     ./events
+```
+
+The script:
+
+1. Starts an MQTT broker on `0.0.0.0:1883`.
+2. Subscribes to `frigate/events` on its own broker.
+3. Backfills events finalized in the last 10 minutes (one-shot HTTP).
+4. Waits for live events forever.
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--frigate-url` | `http://127.0.0.1:5000` | Frigate API base URL |
+| `--ollama-url` | `http://127.0.0.1:11434` | Ollama API base URL |
+| `--model` | `gemma4:e2b` | Vision-capable Ollama model tag |
+| `--out-dir` | `./events` | Per-event Markdown output |
+| `--mqtt-bind` | `0.0.0.0` | MQTT broker bind address |
+| `--mqtt-port` | `1883` | MQTT broker port |
+| `--frames` | `10` | Frames sampled per clip |
+| `--frame-max-dim` | `640` | Downscale longer side (0 = no scaling) |
+| `--backfill-minutes` | `10` | Process events from last N min on startup |
+| `--max-event-duration` | `120` | Skip events longer than N seconds |
+| `--queue-size` | `100` | Max events buffered while LLM is busy |
+
+Run `./eyes-for-agents.py --help` for the full list.
+
+## Customizing the prompt
+
+The default prompt is intentionally broad - just **"Describe what you
+see on these images"** - so you catch as much signal as possible
+without having to know up-front what you're looking for. The agent
+downstream can then decide what matters.
+
+If you have a specific use case, narrow it down with `--prompt` or
+`--prompt-file`. Some examples:
+
+- **Construction site safety** - "Describe people in these frames.
+  Note whether each person is wearing a hard hat and a high-visibility
+  vest. If any person is missing either, list them clearly."
+- **Wildlife camera** - "What animals appear in these frames? Describe
+  the species, count, and their behavior. Ignore humans and vehicles."
+- **Door / package monitoring** - "Is there a delivery person or
+  package visible? If yes, describe what they look like and what they
+  do at the door."
+- **Pet supervision** - "Describe any dogs or cats in the frames,
+  what they are doing, and whether they appear to be alone or with a
+  person."
+
+A focused prompt usually gives much shorter, more useful output and
+runs faster (fewer tokens generated).
+
+## Companion: `tools/mp4_rtsp.py` (fake camera for testing)
+
+Don't have a real IP camera handy? `tools/mp4_rtsp.py` publishes any MP4
+file as an RTSP stream (using an embedded
+[mediamtx](https://github.com/bluenviron/mediamtx) that auto-downloads on
+first run). Frigate can connect to it the same as any real camera. You
+can swap the playing clip on the fly to simulate specific scenarios (a
+delivery, a trespasser, a pet escape):
+
+```bash
+# Terminal 1: start the fake camera, looping a default clip
+./tools/mp4_rtsp.py serve idle.mp4
+
+# Terminal 2: inject a one-shot clip (plays once, then idle resumes)
+./tools/mp4_rtsp.py inject /abs/path/fedex-delivery.mp4
+./tools/mp4_rtsp.py inject /abs/path/raccoon-on-porch.mp4
+
+# Or hit the HTTP control endpoint directly
+curl -X POST http://127.0.0.1:8555/inject -d 'path=/abs/path/clip.mp4'
+curl http://127.0.0.1:8555/status
+```
+
+In your Frigate config, point a camera at the RTSP URL:
+
+```yaml
+cameras:
+  fake_cam:
+    ffmpeg:
+      inputs:
+        - path: rtsp://<host>:8554/live
+          roles: [detect, record]
+```
+
+## License
+
+MIT
