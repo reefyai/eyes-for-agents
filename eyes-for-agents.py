@@ -91,7 +91,6 @@ def start_broker(bind_host: str, bind_port: int) -> threading.Thread:
             },
             "auth": {"allow-anonymous": True, "plugins": []},
             "topic-check": {"enabled": False},
-            "sys-interval": 0,
         }
         broker = Broker(config)
         try:

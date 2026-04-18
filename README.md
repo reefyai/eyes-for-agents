@@ -87,6 +87,11 @@ object in the payload.
 ## Install
 
 ```bash
+# (Debian/Ubuntu only - skip if your distro ships venv)
+sudo apt install -y python3.11-venv
+
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 ```
 
