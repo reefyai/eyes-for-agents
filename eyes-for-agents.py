@@ -81,16 +81,16 @@ def start_broker(bind_host: str, bind_port: int) -> threading.Thread:
     def runner() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        # amqtt's BroketrConfig schema is strict - only ship keys it knows.
+        # Bare minimum: one TCP listener, anonymous auth.
         config = {
             "listeners": {
                 "default": {
                     "type": "tcp",
                     "bind": f"{bind_host}:{bind_port}",
-                    "max-connections": 64,
                 },
             },
-            "auth": {"allow-anonymous": True, "plugins": []},
-            "topic-check": {"enabled": False},
+            "auth": {"allow-anonymous": True},
         }
         broker = Broker(config)
         try:
