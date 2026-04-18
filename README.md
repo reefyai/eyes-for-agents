@@ -192,6 +192,9 @@ curl -X POST http://127.0.0.1:8555/inject -d 'path=/abs/path/clip.mp4'
 curl http://127.0.0.1:8555/status
 ```
 
+Defaults are RTSP `:18554` and control HTTP `:18555` (high ports to dodge
+Frigate's go2rtc and other services that commonly grab `:8554`).
+
 In your Frigate config, point a camera at the RTSP URL:
 
 ```yaml
@@ -199,7 +202,7 @@ cameras:
   fake_cam:
     ffmpeg:
       inputs:
-        - path: rtsp://<host>:8554/live
+        - path: rtsp://<host>:18554/live
           roles: [detect, record]
 ```
 

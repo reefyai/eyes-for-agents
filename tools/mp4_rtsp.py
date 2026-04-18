@@ -2,7 +2,7 @@
 """mp4_rtsp - publish an MP4 as RTSP, with one-shot file injection over HTTP.
 
 Usage:
-    # Start the server (loops main.mp4 forever on rtsp://<host>:8554/live)
+    # Start the server (loops main.mp4 forever on rtsp://<host>:18554/live)
     ./mp4_rtsp.py serve main.mp4
 
     # From any other shell - inject a clip (plays once, then main resumes)
@@ -10,14 +10,17 @@ Usage:
     ./mp4_rtsp.py inject /abs/path/trash.mp4
 
     # Or just hit the HTTP control endpoint directly
-    curl -X POST http://127.0.0.1:8555/inject -d 'path=/abs/path/clip.mp4'
-    curl http://127.0.0.1:8555/status
+    curl -X POST http://127.0.0.1:18555/inject -d 'path=/abs/path/clip.mp4'
+    curl http://127.0.0.1:18555/status
 
 Architecture:
     Embeds mediamtx (auto-downloaded on first run to ~/.cache/mp4_rtsp/) as
     the RTSP server. ffmpeg publishes the main MP4 in a loop. A built-in
-    HTTP control server on :8555 accepts POST /inject?path=... to swap the
+    HTTP control server on :18555 accepts POST /inject?path=... to swap the
     current ffmpeg phase: inject plays once, then main loop resumes.
+
+    Defaults are 18554/18555 (high range) so they don't collide with
+    Frigate's go2rtc on 8554 on a typical Frigate host.
 """
 from __future__ import annotations
 
@@ -301,8 +304,8 @@ def cmd_serve(args) -> int:
 
     if port_already_bound(args.port):
         sys.exit(
-            f"port {args.port} is already in use (on Frigate this is usually "
-            f"go2rtc). Pick another with --port, e.g. --port 18554."
+            f"port {args.port} is already in use. "
+            f"Pick another with --port."
         )
     if port_already_bound(args.control_port):
         sys.exit(
@@ -413,12 +416,14 @@ def main() -> None:
 
     s = sub.add_parser("serve", help="Start RTSP server + control HTTP")
     s.add_argument("input", help="Main MP4 file (looped forever)")
-    s.add_argument("--port", type=int, default=8554, help="RTSP port (default 8554)")
+    s.add_argument("--port", type=int, default=18554,
+                   help="RTSP port (default 18554; chosen high to dodge "
+                        "go2rtc's 8554 on Frigate hosts)")
     s.add_argument("--path", default="live", help="RTSP mount path (default 'live')")
     s.add_argument("--control-bind", default="127.0.0.1",
                    help="Control HTTP bind address (default 127.0.0.1)")
-    s.add_argument("--control-port", type=int, default=8555,
-                   help="Control HTTP port (default 8555)")
+    s.add_argument("--control-port", type=int, default=18555,
+                   help="Control HTTP port (default 18555; paired with RTSP+1)")
     s.add_argument("--ffmpeg", default=None, help="ffmpeg binary override")
     s.add_argument("--mediamtx", default=None,
                    help="Path to mediamtx binary (auto-download if unset)")
@@ -427,12 +432,12 @@ def main() -> None:
     i = sub.add_parser("inject", help="Inject an MP4 into a running server")
     i.add_argument("path", help="Path to MP4 (will be made absolute)")
     i.add_argument("--control-host", default="127.0.0.1")
-    i.add_argument("--control-port", type=int, default=8555)
+    i.add_argument("--control-port", type=int, default=18555)
     i.set_defaults(func=cmd_inject)
 
     st = sub.add_parser("status", help="Print server status JSON")
     st.add_argument("--control-host", default="127.0.0.1")
-    st.add_argument("--control-port", type=int, default=8555)
+    st.add_argument("--control-port", type=int, default=18555)
     st.set_defaults(func=cmd_status)
 
     args = ap.parse_args()
