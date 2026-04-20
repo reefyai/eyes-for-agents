@@ -2,6 +2,9 @@
 
 **Give your AI agents eyes on the physical world.**
 
+> 🥈 **2nd place at the [Miami eMerge AI Hackathon](https://luma.com/1vlz4g39), Apr 2026**
+
+
 Today's AI agents live entirely on the internet. They write code, send
 emails, place orders, book flights, manage calendars - but they're
 strangers to the actual world outside your browser tab. They can't see
@@ -17,14 +20,16 @@ agent now knows when the package was actually delivered, when the dog
 escaped the yard, when a stranger lingered too long at the gate.
 
 Think **Tony Stark's JARVIS, but for your HOA**. (Sorry Karen.)
-<img width="555" height="355" alt="Untitled design (1) (1)_page-0001 (1)" src="https://github.com/user-attachments/assets/2382a729-f19d-4c8e-ae9c-ea8284270c75" />
+<p align="center">
+  <img src="images/jarvis.jpg" alt="JARVIS for your HOA" width="555">
+</p>
 
 **It runs entirely on your hardware.** Frames go to a local GPU running
 [Ollama](https://ollama.com) with [Gemma 4](https://ai.google.dev/gemma).
-Nothing leaves the building - no cloud vision API, no third-party
-training dataset.
+Nothing leaves the building - no cloud vision API, no one training on
+your footage, no big brother.
 
-## Built for the [Miami eMerge AI Hackathon](https://luma.com/1vlz4g39)
+## Built for the [Miami eMerge AI Hackathon](https://luma.com/1vlz4g39) - 🥈 2nd place
 
 We stitched together a few cutting-edge open pieces into something that
 actually does the job:
@@ -59,41 +64,118 @@ on premise.
 
 ## Demo
 
-The website is a chat interface -- ask the agent anything about what's happened around the community that day and it answers from real camera events. Want to see the raw footage? There's a link to the live feed. No timeline scrubbing, no guessing. Just ask.
+The interface is a **Telegram (or WhatsApp) bot** wired to OpenClaw. Ask
+the agent anything about what's happened around the community that day
+and it answers from real camera events. No timeline scrubbing, no
+guessing. Just ask.
 
-<!-- drop your mp4 on this line in the GitHub editor -->
-https://github.com/user-attachments/assets/9c9a2cb5-f3ff-4ce4-9d31-a8895604c177
+<p align="center">
+  <img src="images/demo-fedex-chat.png" alt="Chat: user asks 'Did FedEx show up today?' agent replies 'Yes - around 10:00 PM EDT.'" width="594">
+</p>
 
+The user just asks a question. Behind the scenes the agent calls
+`search_events("FedEx")` over MCP and answers from a real event - no
+custom plumbing, no hardcoded "delivery vehicle" heuristic, no training:
 
+<p align="center">
+  <img src="images/demo-fedex.jpg" alt="The same FedEx event as it appears in Frigate's web UI" width="800">
+  <br>
+  <em>The underlying camera footage as it appears in Frigate's web UI.</em>
+</p>
 
+When Frigate finalized the event, eyes-for-agents pulled the clip,
+sampled **10 frames evenly spaced across the duration** with ffmpeg,
+downscaled each to 640px on the longer side, base64-encoded them, and
+sent **all 10 in a single Ollama `/api/chat` request** (Ollama's chat
+API takes a list of images on one user message, so the model reasons
+over the whole sequence at once instead of frame-by-frame).
+
+Below is exactly what Gemma 4 returned for that 10-frame batch -
+verbatim from the eyes-for-agents log:
+
+```
+[event] model says:
+These images show the same scene, captured from multiple slightly different angles, focusing on a paved outdoor area lined with residential buildings and parked vehicles.
+
+Here is a detailed description of what is visible:
+
+**Setting and Environment:**
+
+*   **Architecture:** The background features several low-rise buildings with warm, yellow/ochre-colored stucco walls and light-colored trim. The style suggests a warm, possibly Mediterranean or tropical location.
+*   **Paving:** The ground is covered with light-colored pavers, creating a neat driveway or parking area.
+*   **Landscaping:** Abundant palm trees are visible, adding a tropical feel to the scene.
+*   **Atmosphere:** The lighting is bright, indicating a sunny day.
+
+**Key Objects:**
+
+*   **FedEx Truck:** The most prominent feature is a large white semi-truck or trailer parked on the left side of the frame. It is clearly branded with the logo and text **"FedEx Ground."**
+*   **Vehicles:** Several modern passenger vehicles (SUVs and cars, mostly dark colors) are parked in the paved area, situated between the truck and the residential buildings.
+*   **Roadway:** The area functions as a driveway or a parking lane leading between the parked cars and the buildings.
+
+**Timestamp:**
+
+All images share a consistent timestamp: **2026-04-17 15:XX**, indicating the time and date the photo was taken.
+
+**In summary, the images depict a sunny, outdoor parking or driveway area set against a backdrop of yellow residential buildings, featuring a FedEx Ground truck and several parked cars.**
+```
+
+The full prompt we sent alongside those 10 frames is intentionally
+plain:
+
+> Describe what you see on these images
+
+That's it. No "look for delivery vehicles", no "list every brand visible",
+no FedEx-specific instruction. The model **picked up the FedEx truck on
+its own** - reading the "FedEx Ground" branding straight off the side of
+the trailer, no custom training, no rule list. That's the line OpenClaw
+later finds via `search_events("FedEx")` when asked the question.
 
 ## How it works
 
 ```
-[Frigate] --MQTT--> [embedded amqtt broker] --> [paho subscriber]
-                                                      |
-                                                      v
-                                         /api/events/<id>/clip.mp4
-                                                      |
-                                                      v
-                                                ffmpeg frames
-                                                      |
-                                                      v
-                                              Ollama /api/chat
-                                                      |
-                                                      v
-                                          <out-dir>/<event_id>.md
+            [CCTV Camera]
+                 │  RTSP
+                 ▼
+            [Frigate]
+                 │  MQTT (frigate/events)
+                 ▼
+   ┌────────────────────────────┐
+   │  eyes-for-agents            │
+   │   - embedded MQTT broker    │
+   │   - ffmpeg frame sampler    │
+   │   - Ollama / Gemma 4 vision │
+   │   - MCP server  :1884       │
+   └────────────────────────────┘
+                 │  MCP (list_events / get_event / search_events)
+                 ▼
+            [OpenClaw]
+                 │
+                 ▼
+            the user
 ```
 
 A single Python script:
 
-- Embeds a tiny MQTT broker so Frigate can publish events directly to
-  it (no separate broker needed).
+- Embeds a tiny MQTT broker so Frigate can publish events directly to it
+  (no separate broker needed).
 - Subscribes to `frigate/events` and processes each finalized event.
-- Pulls the clip via Frigate's HTTP API.
-- Samples N evenly-spaced frames with ffmpeg.
+- Pulls the clip from Frigate's HTTP API and samples N frames with ffmpeg.
 - Asks a local Ollama vision model to describe what's happening.
-- Writes a per-event Markdown report.
+- Writes one Markdown report per event AND exposes them over an MCP server
+  on port 1884 for any agent to query in real time.
+
+## Why Frigate?
+
+Cameras stream 24/7 at ~25 fps. A modern vision LLM like Gemma 4 takes
+many seconds per inference - sending it every frame is impossibly
+expensive (and 99% of the footage is just shadows shifting and leaves
+moving anyway). [Frigate](https://frigate.video) does the cheap part
+first: it runs a YOLO detector on the GPU at full frame rate to spot
+moments worth a second look - a person
+walking up, a car arriving, an animal in the yard. Only then does it
+finalize an "event" with a clip, and only then does eyes-for-agents
+hand those frames to Gemma 4 for a real description. Cheap detector
+filters; expensive describer narrates.
 
 ## Why MQTT (not polling)?
 
@@ -134,9 +216,11 @@ mqtt:
 ./eyes-for-agents.py \
     --frigate-url http://127.0.0.1:5000 \
     --ollama-url  http://ollama:11434 \
-    --model       gemma4:e2b \
-    --out-dir     ./events
+    --model       gemma4:e2b
 ```
+
+(Markdown reports land in `./events/` by default; override with `--out-dir`.
+The MCP server reads from the same directory, so any agent stays in sync.)
 
 The script:
 
@@ -180,21 +264,40 @@ and query the event log live:
 
 ### Wiring up OpenClaw
 
-If [OpenClaw](https://github.com/openclaw/openclaw) is running in a sibling
-container on the same docker network, it can reach this MCP server using
-the eyes-host's container name (in Reefy that's the Frigate instance UUID).
+[OpenClaw](https://github.com/openclaw/openclaw) (like most current MCP
+clients - Claude Desktop, Cursor, Cline, etc.) only supports **stdio**
+MCP servers today. It cannot connect to an HTTP MCP server directly.
 
-Add an entry like this to OpenClaw's MCP config:
+The standard fix is the [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy)
+bridge: a small process that OpenClaw spawns over stdio, which in turn
+opens an HTTP/streamable connection to our server.
 
-```json
-{
-  "mcpServers": {
-    "eyes-for-agents": {
-      "url": "http://<frigate-container-uuid>:1884/mcp"
-    }
-  }
-}
+**One-time setup inside the OpenClaw container:**
+
+```bash
+# Install uv (no Python deps, self-contained)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install mcp-proxy as a uv tool
+~/.local/bin/uv tool install mcp-proxy
+
+# Sanity-check the bridge can reach eyes (Ctrl-C after it connects)
+~/.local/bin/uvx mcp-proxy --transport streamablehttp http://frigate:1884/mcp
 ```
+
+**Register eyes-for-agents in OpenClaw's MCP config:**
+
+```bash
+openclaw mcp set eyes-for-agents '{
+  "command": "/home/node/.local/bin/uvx",
+  "args": ["mcp-proxy", "--transport", "streamablehttp", "http://frigate:1884/mcp"]
+}'
+openclaw mcp list   # should show eyes-for-agents
+```
+
+Replace `frigate` with whatever container name resolves to the eyes host
+on your docker network (or use `localhost`/IP if running both processes
+on the same host).
 
 Now your agent can be asked things like:
 
@@ -202,7 +305,11 @@ Now your agent can be asked things like:
 - _"What did the FedEx driver do?"_ -> `search_events("FedEx")` -> `get_event(...)` for the matching one.
 - _"Anything weird at the gate today?"_ -> `list_events(since_minutes=1440, camera="gate")`.
 
-No filesystem sharing, no copy job, no rsync - just a TCP connection.
+No filesystem sharing, no copy job, no rsync - just a TCP connection
+(via the stdio bridge).
+
+**Once OpenClaw natively supports HTTP MCP** the bridge goes away and the
+config becomes a one-line `{"url": "http://frigate:1884/mcp"}`.
 
 ## Customizing the prompt
 
