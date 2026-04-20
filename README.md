@@ -78,7 +78,7 @@ The user just asks a question. Behind the scenes the agent calls
 custom plumbing, no hardcoded "delivery vehicle" heuristic, no training:
 
 <p align="center">
-  <img src="images/demo-fedex.jpg" alt="The same FedEx event as it appears in Frigate's web UI" width="800">
+  <img src="images/demo-fedex.webp" alt="The same FedEx event as it appears in Frigate's web UI" width="800">
   <br>
   <em>The underlying camera footage as it appears in Frigate's web UI.</em>
 </p>
